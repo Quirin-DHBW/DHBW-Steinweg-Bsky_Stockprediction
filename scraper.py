@@ -6,14 +6,21 @@ from atproto import Client
 
 import duckdb
 from datetime import *
+from time import sleep
 import pandas as pd
 import yfinance as yf
 
-SINCE = datetime(year=2025, month=1, day=1)
-UNTIL = datetime(year=2025, month=1, day=31)
+SINCE = datetime(year=2024, month=1, day=1)
+UNTIL = datetime(year=2025, month=4, day=30)
+SINCE_TXT = SINCE.strftime("%Y%m%d")
+UNTIL_TXT = UNTIL.strftime("%Y%m%d")
 STOCK = "TSLA"
-SEARCH_TERMS = ["Tesla", "Elon", "Musk", "electric", "car"]
-POSTS_PER_DAY = 100
+SEARCH_TERMS = ["Tesla", "Elon Musk", "electric", "car"]
+POSTS_PER_DAY = 10
+
+DO_STOCK_FETCH = True
+DO_POST_FETCH = True
+
 
 single_day = timedelta(days=1)
 
@@ -56,69 +63,71 @@ def fetch_stock_data(ticker, start_date, end_date):
     print("Download abgeschlossen.")
     return df_full
 
+if DO_STOCK_FETCH:
+    stock_df = fetch_stock_data(STOCK, start_date=SINCE.strftime("%Y-%m-%d"), end_date=UNTIL.strftime("%Y-%m-%d"))
 
-client = Client()
-with open("login.txt", "r") as login:
-    creds = login.read().split("\n")
-    #print(creds)
-    client.login(creds[0], creds[1])
+    with duckdb.connect(f"{STOCK}_{SINCE_TXT}_{UNTIL_TXT}_stock.db") as db:
+        db.execute("CREATE TABLE stock_values AS SELECT * FROM stock_df")
+        db.execute("INSERT INTO stock_values SELECT * FROM stock_df")
 
-with duckdb.connect(f"{STOCK}_{SINCE}-{UNTIL}_posts.db") as db:
-    db.execute("""
-        CREATE TABLE IF NOT EXISTS posts (
-            timestamp TIMESTAMPTZ,
-            text TEXT,
-            uri TEXT,
-            like_count INTEGER,
-            quote_count INTEGER,
-            reply_count INTEGER,
-            repost_count INTEGER
-        )
-    """)
-    for term in SEARCH_TERMS:
-        for day in days:
-            resp = None
-            resp_success = False
-            while not resp_success:
-                resp = client.app.bsky.feed.search_posts(params={"q":term, 
-                                                                "limit":POSTS_PER_DAY,
-                                                                "sort":"top",
-                                                                "since":f"{day[0]}T00:00:00.000Z",
-                                                                "until":f"{day[1]}T00:00:00.000Z"
-                                                                }
-                                                        )
+
+if DO_POST_FETCH:
+    print("Logging in to Bluesky...")
+    client = Client()
+    with open("login.txt", "r") as login:
+        creds = login.read().split("\n")
+        #print(creds)
+        client.login(creds[0], creds[1])
+
+    with duckdb.connect(f"{STOCK}_{SINCE_TXT}_{UNTIL_TXT}_posts.db") as db:
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS posts (
+                timestamp TIMESTAMPTZ,
+                text TEXT,
+                uri TEXT,
+                like_count INTEGER,
+                quote_count INTEGER,
+                reply_count INTEGER,
+                repost_count INTEGER
+            )
+        """)
+        for term in SEARCH_TERMS:
+            for day in days:
+                print(f"Pulling posts for {term} on {day[0]}...", end="\r")
+                resp = None
+                resp_success = False
+                while not resp_success:
+                    resp = client.app.bsky.feed.search_posts(params={"q":term, 
+                                                                    "limit":POSTS_PER_DAY,
+                                                                    "sort":"top",
+                                                                    "since":f"{day[0]}T00:00:00.000Z",
+                                                                    "until":f"{day[1]}T00:00:00.000Z"
+                                                                    }
+                                                            )
+                    
+                    try:
+                        test = resp.posts[0].record.created_at
+                        resp_success = True
+                    except:
+                        print("Pull unsuccessful, retrying in a second...", end="\r")
+                        sleep(2)
+                        continue
                 
-                try:
-                    test = resp[0].record.created_at
-                    resp_success = True
-                except:
-                    continue
-            
 
-            # This part is for directly writing it into the db
-            for post in resp.posts:
-                timestamp = post.record.created_at
-                text = post.record.text
-                uri = post.uri
-                like_count = post.like_count
-                quote_count = post.quote_count
-                reply_count = post.reply_count
-                repost_count = post.repost_count
+                # This part is for directly writing it into the db
+                print("\nInserting posts into DB...")
+                for post in resp.posts:
+                    timestamp = post.record.created_at
+                    text = post.record.text
+                    uri = post.uri
+                    like_count = post.like_count
+                    quote_count = post.quote_count
+                    reply_count = post.reply_count
+                    repost_count = post.repost_count
 
-                db.execute("""
-                    INSERT INTO posts (timestamp, text, uri, like_count, quote_count, reply_count, repost_count)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (timestamp, text, uri, like_count, quote_count, reply_count, repost_count))
-
-
-# Stop this to prevent unnecessary scraping for now (don't need to use our limited daily API calls if I have a test set saved UwU)
-"""
-resp = client.app.bsky.feed.search_posts(params={"q":"Trump", "limit":100})
-with open("pull.txt", "w", encoding="utf-8") as f:
-    print(resp)
-    for post in resp.posts:
-        cleaned_post_text = post.record.text.replace("\n", " <b> ")
-        f.write(cleaned_post_text + "\n")
-print(resp)
-"""
+                    db.execute("""
+                        INSERT INTO posts (timestamp, text, uri, like_count, quote_count, reply_count, repost_count)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (timestamp, text, uri, like_count, quote_count, reply_count, repost_count))
+        print("Finished pulling posts.")
 
