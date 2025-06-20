@@ -45,8 +45,9 @@ df_train = df_train.merge(df_stock, on='date', how='left')
 df_train.rename(columns={'date': 'ds', 'close': 'y'}, inplace=True)
 
 # Train test split
-df_test = df_train[df_train['ds'] >= pd.to_datetime('2025-03-15').date()]
-df_train = df_train[df_train['ds'] < pd.to_datetime('2025-03-15').date()]
+cutoff = pd.to_datetime('2025-02-01').date()
+df_test = df_train[df_train['ds'] >= cutoff]
+df_train = df_train[df_train['ds'] < cutoff]
 
 
 # Initialize and fit the Prophet model
