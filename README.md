@@ -1,4 +1,5 @@
 # Portfoilioarbeit - Dashboard
+Daniel Bonath, Tim Schacht, Quirin Barth
 
 Video: https://www.youtube.com/watch?v=ds3Kx37JR5g
 
